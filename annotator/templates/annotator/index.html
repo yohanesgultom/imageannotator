@@ -1,0 +1,365 @@
+<!doctype html>
+{% load static %}
+<html>
+<head>
+    <title>Image Annotator</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css" integrity="sha384-rHyoN1iRsVXV4nD0JutlnGaslCJuC7uwjduW9SVrLvRYooPp2bWYgmgJQIXwl/Sp" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-slider/9.1.3/css/bootstrap-slider.min.css">
+    <style>
+    body {
+        padding-top: 80px;
+    }
+    .container {
+        margin-left: 5px;
+    }
+    .draggable {
+        cursor: move;
+    }
+    .status-bar {
+        padding: 10px 0px;
+    }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-inverse navbar-fixed-top">
+        <div class="container">
+            <div class="navbar-header">
+                <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar" aria-expanded="false" aria-controls="navbar">
+                    <span class="sr-only">Toggle navigation</span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                </button>
+                <a class="navbar-brand" href="#">Image Annotator</a>
+            </div>
+            <div id="navbar" class="collapse navbar-collapse">
+                <ul class="nav navbar-nav">
+                    <li class="active"><a href="#">Home</a></li>
+                </ul>
+            </div><!--/.nav-collapse -->
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- guide -->
+        <div class="alert alert-info alert-dismissible" role="alert">
+            <button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            Usage guide:
+            <ul>
+                <li>Put the files in a directory inside <strong>annotator/static/images/video/</strong> eg. (annotator/static/images/video/01)</li>
+                <li>Select directory to load the images/frames and start annotating</li>
+                <li>Click on the image to add an annotation (rectangle shape)</li>
+                <li>Drag the rectangle to match desired position</li>
+                <li>Resize the rectangle by clicking it and slide the slider in the toolbar</li>
+                <li>To indicate that the face has mouth opened click the rectangle and check Mouth open in toolbar (the rectangle will be Orange instead of Yellow)</li>
+                <li>Click the rectangle and press [Delete] key (in keyboard) to remove it</li>
+                <li>Press [Left arrow] or [Right arrow] key (in keyboard) to navigate between image (frame)</li>
+                <li>Press Save button to save the annotation to server (as pickle). The file will be saved in <strong>annotator/_config/directoryname</strong> eg. (annotator/_config/01)</li>
+            </ul>
+        </div>
+        <!-- toolbar -->
+        <form class="form-inline" action="" method="GET">
+            {% csrf_token %}
+            <div class="form-group">
+                <label class="sr-only" for="frame-dir">Frame directory</label>
+                <select id="frame-dir" class="form-control" name="seldir">
+                    <option value="">Select dir</option>
+                    {% for dir in dirs %}
+                    {% if seldir == dir %}
+                    <option value="{{ dir }}" selected>{{ dir }}</option>
+                    {% else %}
+                    <option value="{{ dir }}">{{ dir }}</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="sr-only" for="slider-rect-size">Rectangle size</label>
+                <input id="slider-rect-size" data-slider-id="rect-size" data-slider-min="10" data-slider-max="700" data-slider-step="10" data-slider-value="100">
+            </div>
+            <div class="checkbox">
+                <label>
+                    <input type="checkbox" name="mouthopen" value="true">
+                    Mouth open
+                </label>
+            </div>
+            <button type="button" id="save" class="btn btn-info">
+                <span class="glyphicon glyphicon-save" aria-hidden="true"></span> Save
+            </button>
+        </form>
+
+        {% ifnotequal images "[]" %}
+        <!-- workspace -->
+        <div id="info" class="status-bar"></div>
+        <div id="image-viewer">
+            <img style="position:absolute" />
+            <svg id="svg-layer" style="position:absolute" width="1280" height="720">
+            </svg>
+        </div>
+        {% endifnotequal %}
+    </div>
+
+    <!-- script -->
+    <script src="https://code.jquery.com/jquery-1.12.4.min.js" integrity="sha256-ZosEbRLbNQzLpnKIkEdrPv7lOy9C27hHQ+Xp8a4MxAQ=" crossorigin="anonymous"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-slider/9.1.3/bootstrap-slider.min.js"></script>
+    <script>
+
+// const
+var COLOR_MOUTH_OPEN = 'orange';
+var COLOR_MOUTH_CLOSED = 'yellow';
+var DEFAULT_WIDTH = 230;
+var DEFAULT_HEIGHT = 300;
+var HEIGHT_RATIO = DEFAULT_HEIGHT / DEFAULT_WIDTH;
+
+// statuses
+var currentImage = 0;
+var dragging = false;
+var selectedElement = false;
+var draggedElement = 0;
+var currentX = 0;
+var currentY = 0;
+var currentMatrix = 0;
+
+$(document).ready(function() {
+
+    {% autoescape off %}
+    var images = {{ images }};
+    var config = {{ config }};
+    {% endautoescape %}
+
+    var viewer = $('#image-viewer');
+    var image = $('img', viewer);
+    var svg = $('#svg-layer');
+    var info = $('#info');
+    var csrfInput = $('input[name=csrfmiddlewaretoken]');
+
+    // init image viewer
+    loadFrame(currentImage, images, config);
+
+    /* event handlers */
+
+    // init slider
+    var sizeInput = $("#slider-rect-size").slider().on('slide', function() {
+        if (selectedElement) {
+            var size = sizeInput.slider('getValue');
+            selectedElement.setAttribute('width', size);
+            selectedElement.setAttribute('height', getHeight(size));
+            saveFrame();
+        }
+    });
+
+    // init checkbox mouth open
+    var mouthopenInput = $('input[name=mouthopen]');
+    mouthopenInput.change(function(e) {
+        if (selectedElement) {
+            var mouthopen = $(this).is(':checked');
+            selectedElement.setAttribute('fill', getRectColor(mouthopen));
+            saveFrame(currentImage, images, config);
+        }
+    });
+
+    // keyboard navigation
+    $('html').keydown(function(e){
+        if (e.keyCode == 37) {
+            saveFrame();
+            currentImage = currentImage > 0 ? currentImage-1 : currentImage;
+        } else if (e.keyCode == 39) {
+            saveFrame();
+            currentImage = currentImage < images.length-1 ? currentImage+1 : currentImage;
+        } else if (e.keyCode == 46) {
+            if (selectedElement) {
+                $(selectedElement).remove();
+                saveFrame();
+                if ($('rect').length > 0) {
+                    selectedElement = $('rect').last()[0];
+                } else {
+                    selectedElement = null;
+                }
+            }
+        }
+
+        // update image
+        if (e.keyCode == 37 || e.keyCode == 39) {
+            loadFrame(currentImage);
+        }
+    });
+
+    // add rectangle on click
+    viewer.click(function(e) {
+        if (!dragging) {
+            var offset = $(this).offset();
+            var x = e.pageX - offset.left;
+            var y = e.pageY - offset.top;
+            var size = sizeInput.slider('getValue');
+            var mouthopen = mouthopenInput.is(':checked');
+            selectedElement = makeRectangle(x, y, size, mouthopen);
+            svg.append(selectedElement);
+            saveFrame();
+        } else {
+            dragging = false;
+        }
+    });
+
+    // load images
+    $('#frame-dir').change(function(e) {
+        if (this.value) {
+            $('form').first().submit();
+        }
+    });
+
+    // save button action
+    $('#save').click(function(e) {
+        var framedir = $('#frame-dir').val();
+        var token = csrfInput.val();
+        $.ajax({
+          type: 'POST',
+          url: 'save',
+          data: JSON.stringify({ 'seldir': framedir, 'config': config }),
+          success: function (data) {
+              if (data.success) {
+                  alert('Annotation saved!');
+              } else {
+                  alert(data.message);
+              }
+          },
+          dataType: 'json'
+        });
+    });
+
+
+    /* functions */
+
+    function makeRectangle(x, y, size, mouthopen, transform) {
+        var color = getRectColor(mouthopen);
+        transform = transform ? transform : 'matrix(1 0 0 1 0 0)';
+        var rect = makeSVG('rect', {
+            x: x,
+            y: y,
+            width: size,
+            height: getHeight(size),
+            fill: color,
+            style: 'fill-opacity:0.5',
+            class: 'draggable',
+            transform: transform
+        });
+        rect.onmousedown = onMouseDownSVG;
+        rect.onclick = onClickSVG;
+        return rect;
+    }
+
+    function removeRectangle() {
+        $(selectedElement).remove();
+        saveFrame(currentImage, images, config);
+        if ($('rect').length > 0) {
+            selectedElement = $('rect').last()[0];
+        } else {
+            selectedElement = null;
+        }
+    }
+
+    function loadFrame(index) {
+        info.text('Frame ' + (index + 1) + ' of ' + images.length);
+        image.attr('src', images[index]);
+        if (config.length > index) {
+            svg.empty();
+            for (var i = 0; i < config[index].length; i++) {
+                var rect = config[index][i];
+                svg.append(makeRectangle(rect.x, rect.y, rect.s, rect.m == 1, rect.t));
+            }
+        }
+    }
+
+    function saveFrame() {
+        var conf = []
+        $('rect', svg).each(function(i) {
+            var c = {};
+            var bbox = this.getBBox();
+            c.x = this.getAttribute('x');
+            c.y = this.getAttribute('y');
+            c.s = this.getAttribute('width');
+            c.m = this.getAttribute('fill') == COLOR_MOUTH_OPEN ? 1 : 0;
+            c.t = this.getAttribute('transform');
+            conf.push(c);
+        });
+        config[currentImage] = conf;
+    }
+
+    /*
+    Draggable SVG
+    Heavily inspired by http://www.petercollingridge.co.uk/interactive-svg-components/draggable-svg-element
+    */
+
+    function onClickSVG(e) {
+        selectedElement = this;
+        var fill = selectedElement.getAttribute('fill');
+        var width = selectedElement.getAttribute('width');
+        mouthopenInput.prop('checked', fill == COLOR_MOUTH_OPEN);
+        sizeInput.slider('setValue', parseInt(width));
+    }
+
+    function onMouseDownSVG(e1) {
+        dragging = true;
+        draggedElement = e1.target;
+        currentX = e1.clientX;
+        currentY = e1.clientY;
+        currentMatrix = draggedElement.getAttributeNS(null, "transform").slice(7,-1).split(' ');
+        for(var i=0; i<currentMatrix.length; i++) {
+            currentMatrix[i] = parseFloat(currentMatrix[i]);
+        }
+        draggedElement.onmousemove = function(e2) {
+            var dx = e2.clientX - currentX;
+            var dy = e2.clientY - currentY;
+            currentMatrix[4] += dx;
+            currentMatrix[5] += dy;
+            newMatrix = "matrix(" + currentMatrix.join(' ') + ")";
+            draggedElement.setAttribute("transform", newMatrix);
+            currentX = e2.clientX;
+            currentY = e2.clientY;
+        }
+        draggedElement.onmouseup = onMouseUpSVG;
+        draggedElement.onmouseout = onMouseUpSVG;
+    }
+
+    function onMouseUpSVG(evt){
+        if(draggedElement != 0){
+            draggedElement.onmousemove = null;
+            draggedElement.onmouseout = null;
+            draggedElement.onmouseup = null;
+            draggedElement = 0;
+            saveFrame();
+        }
+    }
+
+});
+
+/* helpers */
+
+function getHeight(width) {
+    return width * HEIGHT_RATIO;
+}
+
+function getRectColor(mouthopen) {
+    return mouthopen == true ? COLOR_MOUTH_OPEN : COLOR_MOUTH_CLOSED;
+}
+
+/* SVG helpers */
+
+function makeSVG(tag, attrs) {
+    var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+}
+
+function convertCoords(x, y, svg, elem) {
+    var offset = svg.getBoundingClientRect();
+    var matrix = elem.getScreenCTM();
+    return {
+        x: (matrix.a * x) + (matrix.c * y) + matrix.e - offset.left,
+        y: (matrix.b * x) + (matrix.d * y) + matrix.f - offset.top
+    };
+}
+</script>
+</body>
+</html>

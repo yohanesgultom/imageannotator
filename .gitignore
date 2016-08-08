@@ -1,0 +1,4 @@
+*.pyc
+
+annotator/_config/*
+annotator/static/images/video/*
