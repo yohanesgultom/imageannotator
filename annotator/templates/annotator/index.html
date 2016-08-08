@@ -60,7 +60,6 @@
         </div>
         <!-- toolbar -->
         <form class="form-inline" action="" method="GET">
-            {% csrf_token %}
             <div class="form-group">
                 <label class="sr-only" for="frame-dir">Frame directory</label>
                 <select id="frame-dir" class="form-control" name="seldir">
@@ -192,9 +191,10 @@ $(document).ready(function() {
             var offset = $(this).offset();
             var x = e.pageX - offset.left;
             var y = e.pageY - offset.top;
-            var size = sizeInput.slider('getValue');
+            var w = sizeInput.slider('getValue');
+            var h = getHeight(w);
             var mouthopen = mouthopenInput.is(':checked');
-            selectedElement = makeRectangle(x, y, size, mouthopen);
+            selectedElement = makeRectangle(x, y, w, h, mouthopen);
             svg.append(selectedElement);
             saveFrame();
         } else {
@@ -231,18 +231,17 @@ $(document).ready(function() {
 
     /* functions */
 
-    function makeRectangle(x, y, size, mouthopen, transform) {
+    function makeRectangle(x, y, w, h, mouthopen) {
         var color = getRectColor(mouthopen);
-        transform = transform ? transform : 'matrix(1 0 0 1 0 0)';
         var rect = makeSVG('rect', {
             x: x,
             y: y,
-            width: size,
-            height: getHeight(size),
+            width: w,
+            height: h,
             fill: color,
             style: 'fill-opacity:0.5',
             class: 'draggable',
-            transform: transform
+            transform: 'translate(0 0)'
         });
         rect.onmousedown = onMouseDownSVG;
         rect.onclick = onClickSVG;
@@ -266,7 +265,7 @@ $(document).ready(function() {
             svg.empty();
             for (var i = 0; i < config[index].length; i++) {
                 var rect = config[index][i];
-                svg.append(makeRectangle(rect.x, rect.y, rect.s, rect.m == 1, rect.t));
+                svg.append(makeRectangle(rect.x, rect.y, rect.w, rect.h, rect.m == 1));
             }
         }
     }
@@ -278,9 +277,9 @@ $(document).ready(function() {
             var bbox = this.getBBox();
             c.x = this.getAttribute('x');
             c.y = this.getAttribute('y');
-            c.s = this.getAttribute('width');
+            c.w = this.getAttribute('width');
+            c.h = this.getAttribute('height');
             c.m = this.getAttribute('fill') == COLOR_MOUTH_OPEN ? 1 : 0;
-            c.t = this.getAttribute('transform');
             conf.push(c);
         });
         config[currentImage] = conf;
@@ -304,17 +303,21 @@ $(document).ready(function() {
         draggedElement = e1.target;
         currentX = e1.clientX;
         currentY = e1.clientY;
-        currentMatrix = draggedElement.getAttributeNS(null, "transform").slice(7,-1).split(' ');
+        currentMatrix = draggedElement.getAttribute("transform").match(/.*\(([^\)]*)\).*/)[1].split(' ');
         for(var i=0; i<currentMatrix.length; i++) {
             currentMatrix[i] = parseFloat(currentMatrix[i]);
         }
         draggedElement.onmousemove = function(e2) {
             var dx = e2.clientX - currentX;
             var dy = e2.clientY - currentY;
-            currentMatrix[4] += dx;
-            currentMatrix[5] += dy;
-            newMatrix = "matrix(" + currentMatrix.join(' ') + ")";
-            draggedElement.setAttribute("transform", newMatrix);
+            currentMatrix[0] += dx;
+            currentMatrix[1] += dy;
+            var x = parseFloat(draggedElement.getAttribute("x"));
+            var y = parseFloat(draggedElement.getAttribute("y"));
+            var newx = x + dx;
+            var newy = y + dy;
+            draggedElement.setAttribute("x", newx);
+            draggedElement.setAttribute("y", newy);
             currentX = e2.clientX;
             currentY = e2.clientY;
         }
@@ -337,7 +340,7 @@ $(document).ready(function() {
 /* helpers */
 
 function getHeight(width) {
-    return width * HEIGHT_RATIO;
+    return Math.round(width * HEIGHT_RATIO);
 }
 
 function getRectColor(mouthopen) {
